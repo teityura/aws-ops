@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""一覧に出たものを全部消しにいく。守る判断は guardrail と exclude.toml に外出しする。"""
+"""一覧に出たものを全部消しにいく。守る判断は guardrail と exclude.toml に外出しする。
+
+    ./sweep.py            一覧のみ
+    ./sweep.py --delete   確認の後に削除
+"""
 
 import json
-import os
 import subprocess
 import sys
 import tomllib
@@ -11,8 +14,9 @@ from pathlib import Path
 DELETE = "--delete" in sys.argv
 EXCLUDE_FILE = Path(__file__).resolve().parent / "exclude.toml"
 
-# guardrail は Terraform 実行者を除外しているため、管理者で流すと素通りする
-EXPECT_PRINCIPAL = os.environ.get("SWEEP_PRINCIPAL", "sweeper")
+# guardrail は Terraform 実行者を除外しているため、管理者で流すと素通りする。
+# 呼び出し側に委ねず、常に sweeper で叩く（terraform/ が作る）。
+PROFILE = "sweeper"
 
 FAILED_LISTS = []
 
@@ -23,7 +27,7 @@ class AwsError(Exception):
 
 def aws(*args):
     """失敗は例外。ポリシーを外せなければロールも消せないので途中で止めてよい。"""
-    r = subprocess.run(["aws", *args], capture_output=True, text=True)
+    r = subprocess.run(["aws", "--profile", PROFILE, *args], capture_output=True, text=True)
     if r.returncode != 0:
         raise AwsError(r.stderr.strip().splitlines()[-1] if r.stderr else "error")
     return r.stdout.strip()
@@ -31,7 +35,8 @@ def aws(*args):
 
 def jq(*args):
     """握り潰すと一覧が静かに不完全になるので、失敗は FAILED_LISTS に残す。"""
-    r = subprocess.run(["aws", *args, "--output", "json"], capture_output=True, text=True)
+    r = subprocess.run(["aws", "--profile", PROFILE, *args, "--output", "json"],
+                       capture_output=True, text=True)
     if r.returncode != 0:
         msg = r.stderr.strip().splitlines()[-1] if r.stderr else "error"
         FAILED_LISTS.append(f"{' '.join(args[:2])}: {msg}")
@@ -276,13 +281,6 @@ def main():
         if total and not DELETE:
             print("\n一覧のみ。削除するには --delete を付ける")
         return
-
-    if not (who or "").endswith(f"/{EXPECT_PRINCIPAL}"):
-        print(f"\n中止: 実行者が {EXPECT_PRINCIPAL} ではありません")
-        print(f"  現在   {who}")
-        print(f"  対処   AWS_PROFILE={EXPECT_PRINCIPAL} を付けて実行する")
-        print(f"         別の名前で運用しているなら SWEEP_PRINCIPAL で上書きする")
-        sys.exit(1)
 
     print("\n" + "!" * 64)
     print(f"アカウント {acct} / リージョン {region}")

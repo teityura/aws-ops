@@ -3,9 +3,11 @@
 Delete leftover AWS resources.
 
 ```bash
-AWS_PROFILE=sweeper python3 sweep.py            # list only
-AWS_PROFILE=sweeper python3 sweep.py --delete
+./sweep.py            # list only
+./sweep.py --delete
 ```
+
+It always runs as the `sweeper` profile — the calling environment cannot change that.
 
 ## Design
 
@@ -24,8 +26,8 @@ To keep something, change 2 or 3 — never the script.
 so it cannot lift its own restrictions. With an allowlist a missing entry means
 "does not work", not "silently permitted".
 
-`--delete` aborts unless the caller matches `SWEEP_PRINCIPAL` (default `sweeper`).
-Running as an admin would bypass the guardrails, which exempt the Terraform principal.
+Running as an admin would bypass the guardrails, which exempt the Terraform principal,
+so the profile is fixed in the script rather than left to the caller.
 
 ## Setup
 
