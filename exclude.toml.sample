@@ -1,0 +1,7 @@
+# ARN の完全一致で除外する。パターンマッチはしない。
+#   cp exclude.toml.sample exclude.toml
+
+exclude = [
+  # Route53 hosted zone: deleting it changes the NS records
+  # "arn:aws:route53:::hostedzone/XXXXXXXXXXXXXXXXXXXXX",
+]
