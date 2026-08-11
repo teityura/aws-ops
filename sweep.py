@@ -153,8 +153,13 @@ def del_s3(k):
                       f"{field}[].{{Key:Key,VersionId:VersionId}}")
             if not objs:
                 break
-            aws("s3api", "delete-objects", "--bucket", k,
-                "--delete", json.dumps({"Objects": objs, "Quiet": True}))
+            # delete-objects はキー単位で拒否されても終了コード0を返すため、
+            # 応答の Errors を見ないと消えないまま無限ループする
+            out = aws("s3api", "delete-objects", "--bucket", k, "--output", "json",
+                      "--delete", json.dumps({"Objects": objs, "Quiet": True}))
+            errs = (json.loads(out) if out else {}).get("Errors") or []
+            if errs:
+                raise AwsError(f"{errs[0].get('Code')}: {errs[0].get('Message')}")
     aws("s3api", "delete-bucket", "--bucket", k)
 
 
