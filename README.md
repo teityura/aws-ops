@@ -9,6 +9,18 @@ Delete leftover AWS resources.
 
 It always runs as the `sweeper` profile — the calling environment cannot change that.
 
+## cost.py
+
+```bash
+./cost.py [months]
+```
+
+Splits spend into Usage and Credit — a credited account shows `$0.00` in most
+views while still consuming budget. Also prints free tier headroom; a quota that
+does not appear has no free tier at all (DynamoDB on-demand requests, for one).
+
+Cost Explorer bills $0.01 per API call. This makes two.
+
 ## Design
 
 The script holds no rules about what to keep. It tries to delete everything it lists.
