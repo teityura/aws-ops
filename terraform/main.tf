@@ -21,7 +21,10 @@ resource "aws_iam_user" "sweeper" {
 # sweeper が自分の制約を外せないようにしている
 locals {
   delete_actions = [
+    "acm:DeleteCertificate",
     "apigateway:DELETE",
+    "cloudfront:DeleteDistribution",
+    "cloudfront:UpdateDistribution",
     "codebuild:DeleteProject",
     "codepipeline:DeletePipeline",
     "dynamodb:DeleteTable",

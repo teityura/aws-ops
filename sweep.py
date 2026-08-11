@@ -118,6 +118,17 @@ def inventory(acct, region):
     inv["SNS トピック"] = [
         (a, a) for a in jq("sns", "list-topics", "--query", "Topics[].TopicArn")]
 
+    inv["ACM 証明書"] = [
+        (c, c)
+        for reg in dict.fromkeys([region, "us-east-1"])
+        for c in jq("acm", "list-certificates", "--region", reg,
+                    "--query", "CertificateSummaryList[].CertificateArn")]
+
+    inv["CloudFront ディストリビューション"] = [
+        (d["Arn"], d["Id"]) for d in
+        jq("cloudfront", "list-distributions", "--query",
+           "DistributionList.Items[].{Arn:ARN,Id:Id}")]
+
     inv["SQS キュー"] = [
         (f"arn:aws:sqs:{region}:{acct}:{u.rstrip('/').split('/')[-1]}", u)
         for u in jq("sqs", "list-queues", "--query", "QueueUrls")]
@@ -211,6 +222,15 @@ def del_sns(k):
     aws("sns", "delete-topic", "--topic-arn", k)
 
 
+def del_acm(arn):
+    aws("acm", "delete-certificate", "--region", arn.split(":")[3], "--certificate-arn", arn)
+
+
+def del_cloudfront(k):
+    # 無効化して伝播を待つ必要があり、この場では消せない（拒否として表示される）
+    aws("cloudfront", "delete-distribution", "--id", k)
+
+
 def del_sqs(k):
     aws("sqs", "delete-queue", "--queue-url", k)
 
@@ -228,6 +248,8 @@ DELETERS = {
     "Route53 ホストゾーン": del_route53,
     "ECR リポジトリ": del_ecr,
     "SNS トピック": del_sns,
+    "ACM 証明書": del_acm,
+    "CloudFront ディストリビューション": del_cloudfront,
     "SQS キュー": del_sqs,
 }
 
