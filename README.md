@@ -7,39 +7,29 @@ Delete leftover AWS resources.
 ./sweep.py --delete
 ```
 
-It always runs as the `sweeper` profile — the calling environment cannot change that.
-
-## cost.py
+Always runs as the `sweeper` profile, whatever the caller's environment says.
 
 ```bash
 ./cost.py [months]
 ```
 
-Splits spend into Usage and Credit — a credited account shows `$0.00` in most
-views while still consuming budget. Also prints free tier headroom; a quota that
-does not appear has no free tier at all (DynamoDB on-demand requests, for one).
+Splits spend into Usage and Credit — a credited account shows `$0.00` while still
+burning budget. Also prints free tier headroom; a quota absent from the list has
+none at all. Costs $0.02 per run; Cost Explorer bills per API call.
 
-Cost Explorer bills $0.01 per API call. This makes two.
+## Protection
 
-## Design
+The script holds no list of what to spare. It tries to delete everything, and the
+survivors are whatever AWS refuses.
 
-The script holds no rules about what to keep. It tries to delete everything it lists.
-Protection lives outside it:
+| | |
+|---|---|
+| `sweeper-guardrail` | denies deleting anything tagged `Project`, whatever the value |
+| project bucket policies | S3 has no tag condition, so each bucket refuses deletes itself |
+| `sweeper` permissions | allowlist of delete actions |
+| `exclude.toml` | exact ARN match. Last resort |
 
-| | where | |
-|---|---|---|
-| 1 | each project's guardrail | AWS denies it. Scales as projects are added |
-| 2 | `sweeper` permissions | allowlist of delete actions only |
-| 3 | `exclude.toml` | exact ARN match. Last resort |
-
-To keep something, change 2 or 3 — never the script.
-
-`sweeper` has no `iam:CreateUser`, `iam:Detach*Policy` or `iam:CreatePolicyVersion`,
-so it cannot lift its own restrictions. With an allowlist a missing entry means
-"does not work", not "silently permitted".
-
-Running as an admin would bypass the guardrails, which exempt the Terraform principal,
-so the profile is fixed in the script rather than left to the caller.
+To spare something, tag it — never change the script.
 
 ## Setup
 
@@ -48,15 +38,10 @@ cp exclude.toml.sample exclude.toml
 
 cd terraform
 cp terraform.tfvars.sample terraform.tfvars
-terraform init && terraform apply     # run as an admin
+terraform init && terraform apply     # as an admin
 
 aws iam create-access-key --user-name sweeper
 ```
-
-Access keys are not managed by Terraform — they would land in the state file.
-
-Each project's guardrail should attach to every IAM user (`data "aws_iam_users"`),
-so a new project protects `sweeper` automatically after one `terraform apply`.
 
 ## Gotchas
 

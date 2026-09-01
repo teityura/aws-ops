@@ -26,10 +26,8 @@ locals {
     "cloudfront:DeleteDistribution",
     "cloudfront:UpdateDistribution",
     "codebuild:DeleteProject",
-    # CodeStar Connections から改称された。旧名の権限も残っている環境があるため両方入れる
     "codeconnections:DeleteConnection",
     "codepipeline:DeletePipeline",
-    "codestar-connections:DeleteConnection",
     "dynamodb:DeleteTable",
     "ec2:DeleteNatGateway",
     "ec2:DeleteSecurityGroup",
@@ -56,7 +54,6 @@ locals {
     "route53:ChangeResourceRecordSets",
     "route53:DeleteHostedZone",
     "s3:DeleteBucket",
-    "s3:DeleteBucketPolicy",
     "s3:DeleteBucketWebsite",
     "s3:DeleteObject",
     "s3:DeleteObjectVersion",
@@ -65,9 +62,9 @@ locals {
   ]
 }
 
-resource "aws_iam_policy" "sweeper_delete" {
+resource "aws_iam_policy" "delete" {
   name        = "${var.name}-delete"
-  description = "削除アクションのみ。IAMユーザ操作とポリシー改変は含まない"
+  description = "削除系のアクションを許可する"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -82,12 +79,49 @@ resource "aws_iam_policy" "sweeper_delete" {
 
 resource "aws_iam_user_policy_attachment" "delete" {
   user       = aws_iam_user.sweeper.name
-  policy_arn = aws_iam_policy.sweeper_delete.arn
+  policy_arn = aws_iam_policy.delete.arn
 }
 
 resource "aws_iam_user_policy_attachment" "readonly" {
   user       = aws_iam_user.sweeper.name
   policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
+}
+
+# [NOTE] S3 はタグ条件非対応なので Deny が効かない
+# 各プロジェクトでバケットポリシーを設定して、削除を防いでもらう必要がある
+resource "aws_iam_policy" "guardrail" {
+  name        = "${var.name}-guardrail"
+  description = "Projectタグ付きのリソース削除を拒否させる"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "DenyTagged"
+        Effect   = "Deny"
+        Action   = local.delete_actions
+        Resource = "*"
+        Condition = {
+          Null = { "aws:ResourceTag/Project" = "false" }
+        }
+      },
+      {
+        # IAM だけ条件キーの名前が違う
+        Sid      = "DenyTaggedIam"
+        Effect   = "Deny"
+        Action   = [for a in local.delete_actions : a if startswith(a, "iam:")]
+        Resource = "*"
+        Condition = {
+          Null = { "iam:ResourceTag/Project" = "false" }
+        }
+      },
+    ]
+  })
+}
+
+resource "aws_iam_user_policy_attachment" "guardrail" {
+  user       = aws_iam_user.sweeper.name
+  policy_arn = aws_iam_policy.guardrail.arn
 }
 
 # アクセスキーは state に平文で入るため Terraform で管理しない
