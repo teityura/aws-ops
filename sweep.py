@@ -115,6 +115,18 @@ def inventory(acct, region):
         jq("ecr", "describe-repositories", "--query",
            "repositories[].{Arn:repositoryArn,Name:repositoryName}")]
 
+    inv["CodePipeline パイプライン"] = [
+        (f"arn:aws:codepipeline:{region}:{acct}:{n}", n)
+        for n in jq("codepipeline", "list-pipelines", "--query", "pipelines[].name")]
+
+    inv["CodeBuild プロジェクト"] = [
+        (f"arn:aws:codebuild:{region}:{acct}:project/{n}", n)
+        for n in jq("codebuild", "list-projects", "--query", "projects")]
+
+    inv["CodeConnections 接続"] = [
+        (a, a) for a in
+        jq("codeconnections", "list-connections", "--query", "Connections[].ConnectionArn")]
+
     inv["SNS トピック"] = [
         (a, a) for a in jq("sns", "list-topics", "--query", "Topics[].TopicArn")]
 
@@ -223,6 +235,18 @@ def del_ecr(k):
     aws("ecr", "delete-repository", "--repository-name", k, "--force")
 
 
+def del_codepipeline(k):
+    aws("codepipeline", "delete-pipeline", "--name", k)
+
+
+def del_codebuild(k):
+    aws("codebuild", "delete-project", "--name", k)
+
+
+def del_codeconnections(arn):
+    aws("codeconnections", "delete-connection", "--connection-arn", arn)
+
+
 def del_sns(k):
     aws("sns", "delete-topic", "--topic-arn", k)
 
@@ -252,6 +276,9 @@ DELETERS = {
     "API Gateway (REST)": del_apigw_rest,
     "Route53 ホストゾーン": del_route53,
     "ECR リポジトリ": del_ecr,
+    "CodePipeline パイプライン": del_codepipeline,
+    "CodeBuild プロジェクト": del_codebuild,
+    "CodeConnections 接続": del_codeconnections,
     "SNS トピック": del_sns,
     "ACM 証明書": del_acm,
     "CloudFront ディストリビューション": del_cloudfront,

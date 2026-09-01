@@ -26,7 +26,10 @@ locals {
     "cloudfront:DeleteDistribution",
     "cloudfront:UpdateDistribution",
     "codebuild:DeleteProject",
+    # CodeStar Connections から改称された。旧名の権限も残っている環境があるため両方入れる
+    "codeconnections:DeleteConnection",
     "codepipeline:DeletePipeline",
+    "codestar-connections:DeleteConnection",
     "dynamodb:DeleteTable",
     "ec2:DeleteNatGateway",
     "ec2:DeleteSecurityGroup",
