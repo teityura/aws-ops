@@ -14,6 +14,7 @@ import json
 import subprocess
 import sys
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 
 # [NOTE] terraform/main.tf の guardrail が見ているキーと同じもの
 # [NOTE] ここを可変にすると、守られていないキーで一覧できてしまい誤解を生む
@@ -75,11 +76,20 @@ def collect():
          else untagged.append(r["ResourceARN"]))
 
     seen = {a for v in tagged.values() for a in v} | set(untagged)
-    for label, args in GLOBAL:
+
+    # [NOTE] Tagging API に出ない global リソースは1件ずつ引くしかない。
+    # [NOTE] aws CLI は1回の起動に約1.3秒かかるので、並列で回さないと数十秒になる
+    targets = []
+    for _, args in GLOBAL:
         for arn in jq(*args) or []:
-            if arn in seen:
+            # AWS のサービスリンクロールはタグを持てず、削除対象でもない
+            if arn in seen or ":role/aws-service-role/" in arn:
                 continue
-            t = tags_of(arn)
+            seen.add(arn)
+            targets.append(arn)
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        for arn, t in zip(targets, pool.map(tags_of, targets)):
             (tagged[t[KEY]].append(arn) if KEY in t else untagged.append(arn))
     return tagged, untagged
 

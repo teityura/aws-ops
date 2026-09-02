@@ -25,6 +25,7 @@ Delete leftover AWS resources, and see what is protected and what it costs.
 ```
 
 Untagged means unprotected — a leftover to remove, or a tag someone forgot.
+AWS service-linked roles are skipped; they cannot be tagged or deleted.
 
 ```bash
 ./cost.py                  # last 6 months
