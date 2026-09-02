@@ -121,10 +121,12 @@ def main():
         for arn in sorted(tagged[proj]):
             print("  " + short(arn))
 
-    if not only:
-        print(f"\n=== タグ無し  ({len(untagged)}) ===")
-        for arn in sorted(untagged):
-            print("  " + short(arn))
+    if only:
+        return
+
+    print(f"\n=== タグ無し  ({len(untagged)}) ===")
+    for arn in sorted(untagged):
+        print("  " + short(arn))
 
     print(f"\n=== コスト配分タグ {KEY}: {cost_status()} ===")
 

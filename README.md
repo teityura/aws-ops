@@ -20,8 +20,6 @@ Delete leftover AWS resources, and see what is protected and what it costs.
   lambda      function:gnos-api
   logs        log-group:/aws/lambda/gnos-api
   s3          gnos-site
-
-=== コスト配分タグ Project: 未取込 ===
 ```
 
 Untagged means unprotected.
