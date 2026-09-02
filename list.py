@@ -20,17 +20,13 @@ from concurrent.futures import ThreadPoolExecutor
 # [NOTE] ここを可変にすると、守られていないキーで一覧できてしまい誤解を生む
 KEY = "Project"
 
-# [NOTE] Tagging API はリージョン単位。global なものは個別に引く必要がある
-GLOBAL = [
-    ("cloudfront", ["cloudfront", "list-distributions",
-                    "--query", "DistributionList.Items[].ARN"]),
-    ("acm(us-east-1)", ["acm", "list-certificates", "--region", "us-east-1",
-                        "--query", "CertificateSummaryList[].CertificateArn"]),
-    ("iam role", ["iam", "list-roles", "--query", "Roles[].Arn"]),
-    ("iam policy", ["iam", "list-policies", "--scope", "Local",
-                    "--query", "Policies[].Arn"]),
+# [NOTE] Tagging API はリージョン単位。us-east-1 を足すと CloudFront と ACM も一括で取れる
+# [NOTE] IAM だけは一括でタグを引く API が無く、1件ずつ問い合わせるしかない
+REGIONS = [None, "us-east-1"]
+IAM_LISTS = [
+    ["iam", "list-roles", "--query", "Roles[].Arn"],
+    ["iam", "list-policies", "--scope", "Local", "--query", "Policies[].Arn"],
 ]
-
 
 def jq(*args):
     r = subprocess.run(["aws", *args, "--output", "json"],
@@ -44,53 +40,49 @@ def jq(*args):
 
 
 def tags_of(arn):
-    """global リソースはサービスごとに API が違う。"""
-    svc = arn.split(":")[2]
-    if svc == "cloudfront":
-        d = jq("cloudfront", "list-tags-for-resource", "--resource", arn,
-               "--query", "Tags.Items")
-        return {t["Key"]: t["Value"] for t in d or []}
-    if svc == "acm":
-        d = jq("acm", "list-tags-for-certificate", "--region", "us-east-1",
-               "--certificate-arn", arn, "--query", "Tags")
-        return {t["Key"]: t["Value"] for t in d or []}
-    if svc == "iam":
-        kind, name = arn.split(":")[5].split("/")[0], arn.split("/")[-1]
-        if kind == "role":
-            d = jq("iam", "list-role-tags", "--role-name", name, "--query", "Tags")
-        else:
-            d = jq("iam", "list-policy-tags", "--policy-arn", arn, "--query", "Tags")
-        return {t["Key"]: t["Value"] for t in d or []}
-    return {}
+    """IAM のみ。ロールとポリシーで API が違う。"""
+    kind, name = arn.split(":")[5].split("/")[0], arn.split("/")[-1]
+    if kind == "role":
+        d = jq("iam", "list-role-tags", "--role-name", name, "--query", "Tags")
+    else:
+        d = jq("iam", "list-policy-tags", "--policy-arn", arn, "--query", "Tags")
+    return {t["Key"]: t["Value"] for t in d or []}
+
+
+def bulk(region):
+    args = ["resourcegroupstaggingapi", "get-resources",
+            "--query", "ResourceTagMappingList"]
+    if region:
+        args += ["--region", region]
+    return jq(*args) or []
 
 
 def collect():
     """{project: [arn, ...]} と、タグ無しの ARN 一覧を返す。"""
     tagged, untagged = defaultdict(list), []
 
-    # リージョン内は Tagging API が一括で返す
-    for r in jq("resourcegroupstaggingapi", "get-resources",
-                "--query", "ResourceTagMappingList") or []:
-        t = {x["Key"]: x["Value"] for x in r["Tags"]}
-        (tagged[t[KEY]].append(r["ResourceARN"]) if KEY in t
-         else untagged.append(r["ResourceARN"]))
+    def put(arn, t):
+        (tagged[t[KEY]].append(arn) if KEY in t else untagged.append(arn))
 
-    seen = {a for v in tagged.values() for a in v} | set(untagged)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        regions = list(pool.map(bulk, REGIONS))
+        iam = list(pool.map(lambda a: jq(*a) or [], IAM_LISTS))
 
-    # [NOTE] Tagging API に出ない global リソースは1件ずつ引くしかない。
-    # [NOTE] aws CLI は1回の起動に約1.3秒かかるので、並列で回さないと数十秒になる
-    targets = []
-    for _, args in GLOBAL:
-        for arn in jq(*args) or []:
-            # AWS のサービスリンクロールはタグを持てず、削除対象でもない
-            if arn in seen or ":role/aws-service-role/" in arn:
+    seen = set()
+    for rows in regions:
+        for r in rows:
+            # AWS が持つ請求用オブジェクト。消せないので一覧に出さない
+            if r["ResourceARN"] in seen or ":payments:" in r["ResourceARN"]:
                 continue
-            seen.add(arn)
-            targets.append(arn)
+            seen.add(r["ResourceARN"])
+            put(r["ResourceARN"], {x["Key"]: x["Value"] for x in r["Tags"]})
 
+    # AWS が作るサービスリンクロールはタグを持てず、削除もできない
+    targets = [a for arns in iam for a in arns
+               if a not in seen and ":role/aws-service-role/" not in a]
     with ThreadPoolExecutor(max_workers=16) as pool:
         for arn, t in zip(targets, pool.map(tags_of, targets)):
-            (tagged[t[KEY]].append(arn) if KEY in t else untagged.append(arn))
+            put(arn, t)
     return tagged, untagged
 
 
