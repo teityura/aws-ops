@@ -5,34 +5,51 @@ Delete leftover AWS resources, and see what is protected and what it costs.
 ```bash
 ./sweep.py                 # list only
 ./sweep.py --delete        # delete, after a confirmation
-
-./list.py                  # resources by Project tag value, plus untagged ones
-./list.py gnos             # one project
-
-./cost.py                  # spend, last 6 months
-./cost.py 12               # last 12 months
 ```
 
-`sweep.py` always runs as the `sweeper` profile, whatever the caller's
-environment says.
+```bash
+./list.py                  # every Project tag value, plus untagged
+./list.py gnos
+```
 
-`list.py` groups by the `Project` tag — the same key `sweeper-guardrail` denies
-on. Anything under "untagged" is unprotected: either a leftover to remove, or a
-tag someone forgot.
+```
+=== Project=gnos  (9) ===
+  dynamodb    table/gnos-games
+  events      rule/gnos-schedule
+  iam         role/gnos-lambda-role
+  lambda      function:gnos-api
+  logs        log-group:/aws/lambda/gnos-api
+  s3          gnos-site
 
-`cost.py` splits spend into Usage and Credit — a credited account shows `$0.00`
-while still burning budget — then breaks the latest month down by service and by
-`Project` tag value, and prints free tier headroom. A quota absent from that list
-has none at all. Costs $0.03 per run; Cost Explorer bills per API call.
+=== コスト配分タグ Project: 未取込 ===
+```
 
-Tag values only reach the billing data once the tag is activated for cost
-allocation, which takes up to a day after the tag first appears and never applies
-retroactively:
+Untagged means unprotected — a leftover to remove, or a tag someone forgot.
+
+```bash
+./cost.py                  # last 6 months
+./cost.py 12
+```
+
+```
+2026-08  サービス別の実使用（クレジット控除前）
+    30.3398 USD  EC2 - Other                        ████████████████████
+    29.9813 USD  Amazon Elastic Container Service   ████████████████████
+    86.8491 USD  合計
+
+2026-08  Project タグの値ごとの実使用
+    86.8490639 USD  （値なし）                        ████████████████████
+```
+
+Values stay empty until the tag is activated for cost allocation — up to a day
+after it first appears, and never retroactive:
 
 ```bash
 aws ce update-cost-allocation-tags-status \
   --cost-allocation-tags-status TagKey=Project,Status=Active
 ```
+
+Cost Explorer bills per API call; `cost.py` makes three.
 
 ## Protection
 
