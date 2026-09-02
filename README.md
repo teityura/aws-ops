@@ -74,5 +74,7 @@ aws iam create-access-key --user-name sweeper
 Named profiles need `region` in `~/.aws/config`. Without it every regional service
 silently drops out of the listing, while IAM, S3 and Route53 still work.
 
-`aws iam simulate-principal-policy` does not populate `aws:PrincipalArn`. Pass it via
-`--context-entries`, or negated conditions such as `ArnNotLike` evaluate wrong.
+`aws iam simulate-principal-policy` populates neither `aws:PrincipalArn` nor
+resource tags. Pass them via `--context-entries`, or negated conditions such as
+`ArnNotLike` and the tag guardrail both evaluate wrong — a protected bucket comes
+back `allowed`. Verify protection by attempting the delete, not by simulating.
