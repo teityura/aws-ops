@@ -4,7 +4,7 @@ Delete leftover AWS resources, and see what is protected and what it costs.
 
 ```bash
 ./sweep.py                 # list only
-./sweep.py --delete        # delete, after a confirmation
+./sweep.py --delete
 ```
 
 ```bash
@@ -24,8 +24,7 @@ Delete leftover AWS resources, and see what is protected and what it costs.
 === コスト配分タグ Project: 未取込 ===
 ```
 
-Untagged means unprotected — a leftover to remove, or a tag someone forgot.
-AWS service-linked roles are skipped; they cannot be tagged or deleted.
+Untagged means unprotected.
 
 ```bash
 ./cost.py                  # last 6 months
@@ -33,24 +32,18 @@ AWS service-linked roles are skipped; they cannot be tagged or deleted.
 ```
 
 ```
-2026-08  サービス別の実使用（クレジット控除前）
-    30.3398 USD  EC2 - Other                        ████████████████████
-    29.9813 USD  Amazon Elastic Container Service   ████████████████████
-    86.8491 USD  合計
-
 2026-08  Project タグの値ごとの実使用
     86.8490639 USD  （値なし）                        ████████████████████
+  ※ コスト配分タグ Project が未有効
 ```
 
-Values stay empty until the tag is activated for cost allocation — up to a day
-after it first appears, and never retroactive:
+Tag values reach the billing data only after activation — up to a day, never
+retroactive. Cost Explorer bills per API call; `cost.py` makes three.
 
 ```bash
 aws ce update-cost-allocation-tags-status \
   --cost-allocation-tags-status TagKey=Project,Status=Active
 ```
-
-Cost Explorer bills per API call; `cost.py` makes three.
 
 ## Protection
 

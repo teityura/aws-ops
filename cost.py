@@ -100,9 +100,7 @@ def main():
     else:
         print("  （データなし）")
     if len(rows) == 1 and rows[0][1] == "（値なし）":
-        print(f"  ※ 全額が値なし。コスト配分タグ {TAG_KEY} が未有効の可能性がある")
-        print(f"     aws ce update-cost-allocation-tags-status "
-              f"--cost-allocation-tags-status TagKey={TAG_KEY},Status=Active")
+        print(f"  ※ コスト配分タグ {TAG_KEY} が未有効")
 
     print()
     print("=" * 62)
@@ -114,7 +112,7 @@ def main():
         pct = used / limit * 100 if limit else 0
         print(f"  {u['service'][:20]:20} {u['usageType'][:22]:22} "
               f"{pct:5.1f}%  {used:.4g}/{limit:.6g} {u.get('unit','')[:12]}")
-    print("\n  ※ 項目に無いものは無料枠が存在しない（DynamoDB のオンデマンド読み書きなど）")
+    print("\n  ※ 項目に無いものは無料枠が無い")
 
 
 if __name__ == "__main__":

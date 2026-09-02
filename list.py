@@ -106,11 +106,8 @@ def cost_status():
     d = jq("ce", "list-cost-allocation-tags", "--query",
            f"CostAllocationTags[?TagKey=='{KEY}']")
     if not d:
-        return ("未取込", "AWS が請求データに取り込むまで最大24時間。"
-                         "有効化しても遡及しない")
-    st = d[0]["Status"]
-    return (st, "集計に反映される" if st == "Active"
-            else "候補には出ている。update-cost-allocation-tags-status で有効化できる")
+        return "未取込"
+    return d[0]["Status"]
 
 
 def main():
@@ -126,13 +123,10 @@ def main():
 
     if not only:
         print(f"\n=== タグ無し  ({len(untagged)}) ===")
-        print("  sweeper-guardrail は素通しする。撤去候補か、付け漏れ")
         for arn in sorted(untagged):
             print("  " + short(arn))
 
-    st, note = cost_status()
-    print(f"\n=== コスト配分タグ {KEY}: {st} ===")
-    print("  " + note)
+    print(f"\n=== コスト配分タグ {KEY}: {cost_status()} ===")
 
 
 if __name__ == "__main__":
