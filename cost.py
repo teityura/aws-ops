@@ -3,7 +3,7 @@
 
     ./cost.py [月数]     既定6ヶ月
 
-Cost Explorer API は 1リクエスト $0.01 かかる。この実行で2回叩く。
+Cost Explorer API は 1リクエスト $0.01 かかる。この実行で3回叩く。
 """
 
 import json
@@ -12,6 +12,9 @@ import sys
 from datetime import date
 
 MONTHS = int(sys.argv[1]) if len(sys.argv) > 1 else 6
+
+# [NOTE] guardrail と list.py が見ているキーと同じもの
+TAG_KEY = "Project"
 
 
 def jq(*args):
@@ -33,14 +36,22 @@ def period():
     return f"{y}-{m:02d}-01", date.today().isoformat()
 
 
-def ce(group_key, extra_filter=None):
+def ce(group_key, extra_filter=None, kind="DIMENSION"):
     start, end = period()
     args = ["ce", "get-cost-and-usage", "--time-period", f"Start={start},End={end}",
             "--granularity", "MONTHLY", "--metrics", "UnblendedCost",
-            "--group-by", f"Type=DIMENSION,Key={group_key}"]
+            "--group-by", f"Type={kind},Key={group_key}"]
     if extra_filter:
         args += ["--filter", json.dumps(extra_filter)]
     return jq(*args)["ResultsByTime"]
+
+
+def last_with_data(results):
+    """[-1] は当月を掴む。月初だと空なので、Groups がある最後の月を返す。"""
+    for t in reversed(results):
+        if t["Groups"]:
+            return t
+    return results[-1]
 
 
 def main():
@@ -60,7 +71,7 @@ def main():
     print("=" * 62)
     print("直近月  サービス別の実使用（クレジット控除前）")
     print("=" * 62)
-    svc = ce("SERVICE", {"Dimensions": {"Key": "RECORD_TYPE", "Values": ["Usage"]}})[-1]
+    svc = last_with_data(ce("SERVICE", {"Dimensions": {"Key": "RECORD_TYPE", "Values": ["Usage"]}}))
     items = sorted(((float(g["Metrics"]["UnblendedCost"]["Amount"]), g["Keys"][0])
                     for g in svc["Groups"]), reverse=True)
     items = [(a, s) for a, s in items if a > 0.00001]
@@ -68,6 +79,30 @@ def main():
     for amt, name in items:
         print(f"  {amt:9.4f} USD  {name[:34]:34} {bar(amt, top, 20)}")
     print(f"  {sum(a for a, _ in items):9.4f} USD  合計")
+
+    print()
+    print("=" * 62)
+    proj = last_with_data(ce(TAG_KEY, {"Dimensions": {"Key": "RECORD_TYPE",
+                             "Values": ["Usage"]}}, kind="TAG"))
+    proj_month = proj["TimePeriod"]["Start"][:7]
+    print(f"{proj_month}  {TAG_KEY} タグの値ごとの実使用")
+    print("=" * 62)
+    # [NOTE] コスト配分タグを有効化するまで、全額が値なし（Project$）に寄る
+    # [NOTE] 有効化しても遡及しないので、それ以前の月は値なしのまま
+    rows = sorted(((float(g["Metrics"]["UnblendedCost"]["Amount"]),
+                    g["Keys"][0].split("$", 1)[1] or "（値なし）")
+                   for g in proj["Groups"]), reverse=True)
+    # [NOTE] サービス別と違い閾値で切らない。0 に近くても値の内訳を見たいため
+    if rows:
+        top = rows[0][0] or 1
+        for amt, name in rows:
+            print(f"  {amt:12.7f} USD  {name[:31]:31} {bar(amt, top, 20)}")
+    else:
+        print("  （データなし）")
+    if len(rows) == 1 and rows[0][1] == "（値なし）":
+        print(f"  ※ 全額が値なし。コスト配分タグ {TAG_KEY} が未有効の可能性がある")
+        print(f"     aws ce update-cost-allocation-tags-status "
+              f"--cost-allocation-tags-status TagKey={TAG_KEY},Status=Active")
 
     print()
     print("=" * 62)

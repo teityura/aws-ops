@@ -1,25 +1,42 @@
 # aws-ops
 
-Delete leftover AWS resources.
+Delete leftover AWS resources, and see what is protected and what it costs.
 
 ```bash
-./sweep.py            # list only
-./sweep.py --delete
+./sweep.py                 # list only
+./sweep.py --delete        # delete, after a confirmation
+
+./list.py                  # resources by Project tag value, plus untagged ones
+./list.py gnos             # one project
+
+./cost.py                  # spend, last 6 months
+./cost.py 12               # last 12 months
 ```
 
-Always runs as the `sweeper` profile, whatever the caller's environment says.
+`sweep.py` always runs as the `sweeper` profile, whatever the caller's
+environment says.
+
+`list.py` groups by the `Project` tag — the same key `sweeper-guardrail` denies
+on. Anything under "untagged" is unprotected: either a leftover to remove, or a
+tag someone forgot.
+
+`cost.py` splits spend into Usage and Credit — a credited account shows `$0.00`
+while still burning budget — then breaks the latest month down by service and by
+`Project` tag value, and prints free tier headroom. A quota absent from that list
+has none at all. Costs $0.03 per run; Cost Explorer bills per API call.
+
+Tag values only reach the billing data once the tag is activated for cost
+allocation, which takes up to a day after the tag first appears and never applies
+retroactively:
 
 ```bash
-./cost.py [months]
+aws ce update-cost-allocation-tags-status \
+  --cost-allocation-tags-status TagKey=Project,Status=Active
 ```
-
-Splits spend into Usage and Credit — a credited account shows `$0.00` while still
-burning budget. Also prints free tier headroom; a quota absent from the list has
-none at all. Costs $0.02 per run; Cost Explorer bills per API call.
 
 ## Protection
 
-The script holds no list of what to spare. It tries to delete everything, and the
+`sweep.py` holds no list of what to spare. It tries to delete everything, and the
 survivors are whatever AWS refuses.
 
 | | |
