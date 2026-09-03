@@ -100,7 +100,8 @@ def main():
     else:
         print("  （データなし）")
     if len(rows) == 1 and rows[0][1] == "（値なし）":
-        print(f"  ※ コスト配分タグ {TAG_KEY} が未有効")
+        # [NOTE] 状態は list.py が出す。ここで問い合わせると API 課金が1回増える
+        print(f"  ※ 有効化より前の利用分は値なしのまま。状態は ./list.py")
 
     print()
     print("=" * 62)

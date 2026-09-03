@@ -30,13 +30,13 @@ Untagged means unprotected.
 ```
 
 ```
-2026-08  Project タグの値ごとの実使用
-    86.8490639 USD  （値なし）                        ████████████████████
-  ※ コスト配分タグ Project が未有効
+2026-09  Project タグの値ごとの実使用
+     8.1478021 USD  （値なし）                        ████████████████████
+  ※ 有効化より前の利用分は値なしのまま。状態は ./list.py
 ```
 
-Tag values reach the billing data only after activation — up to a day, never
-retroactive. Cost Explorer bills per API call; `cost.py` makes three.
+A tag key becomes selectable about a day after it first appears on a resource,
+and activating it is not retroactive. Cost Explorer bills per API call.
 
 ```bash
 aws ce update-cost-allocation-tags-status \
