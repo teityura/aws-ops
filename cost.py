@@ -7,11 +7,15 @@ Cost Explorer API は 1リクエスト $0.01 かかる。この実行で3回叩�
 """
 
 import json
+import re
 import subprocess
 import sys
 from datetime import date
 
 MONTHS = int(sys.argv[1]) if len(sys.argv) > 1 else 6
+
+# [NOTE] これ未満の行は件数だけ出す。無料枠内の 0 円の行が数十並ぶため
+MIN_USD = 0.01
 
 # [NOTE] guardrail と list.py が見ているキーと同じもの
 TAG_KEY = "Project"
@@ -36,11 +40,12 @@ def period():
     return f"{y}-{m:02d}-01", date.today().isoformat()
 
 
-def ce(group_key, extra_filter=None, kind="DIMENSION"):
+def ce(group_key, extra_filter=None, kind="DIMENSION", metrics=("UnblendedCost",)):
+    """group_key は "A,B" で2つまで渡せる（API の上限が2）。"""
     start, end = period()
     args = ["ce", "get-cost-and-usage", "--time-period", f"Start={start},End={end}",
-            "--granularity", "MONTHLY", "--metrics", "UnblendedCost",
-            "--group-by", f"Type={kind},Key={group_key}"]
+            "--granularity", "MONTHLY", "--metrics", *metrics,
+            "--group-by", *[f"Type={kind},Key={k}" for k in group_key.split(",")]]
     if extra_filter:
         args += ["--filter", json.dumps(extra_filter)]
     return jq(*args)["ResultsByTime"]
@@ -69,16 +74,27 @@ def main():
 
     print()
     print("=" * 62)
-    print("直近月  サービス別の実使用（クレジット控除前）")
+    print(f"直近月  使用タイプ別の実使用（クレジット控除前、{MIN_USD} USD 以上）")
     print("=" * 62)
-    svc = last_with_data(ce("SERVICE", {"Dimensions": {"Key": "RECORD_TYPE", "Values": ["Usage"]}}))
-    items = sorted(((float(g["Metrics"]["UnblendedCost"]["Amount"]), g["Keys"][0])
+    # [NOTE] サービス名だけだと「EC2 - Other」に NAT Gateway や EBS が埋もれる
+    svc = last_with_data(ce("SERVICE,USAGE_TYPE",
+                            {"Dimensions": {"Key": "RECORD_TYPE", "Values": ["Usage"]}},
+                            metrics=("UnblendedCost", "UsageQuantity")))
+    items = sorted(((float(g["Metrics"]["UnblendedCost"]["Amount"]), g["Keys"][1], g["Keys"][0],
+                     float(g["Metrics"]["UsageQuantity"]["Amount"]),
+                     g["Metrics"]["UsageQuantity"]["Unit"])
                     for g in svc["Groups"]), reverse=True)
-    items = [(a, s) for a, s in items if a > 0.00001]
-    top = items[0][0] if items else 1
-    for amt, name in items:
-        print(f"  {amt:9.4f} USD  {name[:34]:34} {bar(amt, top, 20)}")
-    print(f"  {sum(a for a, _ in items):9.4f} USD  合計")
+    shown = [i for i in items if i[0] >= MIN_USD]
+    # [NOTE] リージョン接頭辞（APN1- など）は1種類しか無い間は読む邪魔なので落とす
+    prefixes = {m.group() for i in shown if (m := re.match(r"[A-Z]{2,4}\d-", i[1]))}
+    cut = len(prefixes.pop()) if len(prefixes) == 1 else 0
+    top = shown[0][0] if shown else 1
+    for amt, utype, _, qty, unit in shown:
+        utype = utype[cut:] if cut and re.match(r"[A-Z]{2,4}\d-", utype) else utype
+        print(f"  {amt:9.4f} USD  {utype[:26]:26} {qty:8.5g} {unit[:8]:8} {bar(amt, top, 20)}")
+    rest = len(items) - len(shown)
+    print(f"  {sum(i[0] for i in items):9.4f} USD  合計"
+          + (f"（ほか {rest} 行は {MIN_USD} USD 未満）" if rest else ""))
 
     print()
     print("=" * 62)
