@@ -23,23 +23,30 @@ locals {
   delete_actions = [
     "acm:DeleteCertificate",
     "apigateway:DELETE",
+    "cloudformation:DeleteStack",
     "cloudfront:DeleteDistribution",
     "cloudfront:UpdateDistribution",
     "codebuild:DeleteProject",
     "codeconnections:DeleteConnection",
     "codepipeline:DeletePipeline",
     "dynamodb:DeleteTable",
+    "ec2:DeleteInternetGateway",
     "ec2:DeleteNatGateway",
+    "ec2:DeleteRouteTable",
     "ec2:DeleteSecurityGroup",
     "ec2:DeleteSubnet",
     "ec2:DeleteVpc",
+    "ec2:DetachInternetGateway",
     "ec2:ReleaseAddress",
     "ec2:TerminateInstances",
     "ecr:DeleteRepository",
     "ecs:DeleteCluster",
     "ecs:DeleteService",
+    "elasticloadbalancing:DeleteLoadBalancer",
+    "elasticloadbalancing:DeleteTargetGroup",
     "events:DeleteRule",
     "events:RemoveTargets",
+    "glue:DeleteSession",
     "iam:DeleteInstanceProfile",
     "iam:DeletePolicy",
     "iam:DeletePolicyVersion",
@@ -64,7 +71,7 @@ locals {
 
 resource "aws_iam_policy" "delete" {
   name        = "${var.name}-delete"
-  description = "削除系のアクションを許可する"
+  description = "削除アクションのみ。IAMユーザ操作とポリシー改変は含まない"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -91,7 +98,7 @@ resource "aws_iam_user_policy_attachment" "readonly" {
 # 各プロジェクトでバケットポリシーを設定して、削除を防いでもらう必要がある
 resource "aws_iam_policy" "guardrail" {
   name        = "${var.name}-guardrail"
-  description = "Projectタグ付きのリソース削除を拒否させる"
+  description = "Project タグ付きリソースの削除を拒否。タグの値は見ない"
 
   policy = jsonencode({
     Version = "2012-10-17"

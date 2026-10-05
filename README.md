@@ -45,8 +45,8 @@ aws ce update-cost-allocation-tags-status \
 
 ## Protection
 
-`sweep.py` holds no list of what to spare. It tries to delete everything, and the
-survivors are whatever AWS refuses.
+`sweep.py` holds no list of what to spare. It tries to delete everything it can
+list, and the survivors are whatever AWS refuses.
 
 | | |
 |---|---|

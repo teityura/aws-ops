@@ -6,8 +6,10 @@
 """
 
 import json
+import re
 import subprocess
 import sys
+import time
 import tomllib
 from pathlib import Path
 
@@ -29,7 +31,8 @@ def aws(*args):
     """失敗は例外。ポリシーを外せなければロールも消せないので途中で止めてよい。"""
     r = subprocess.run(["aws", "--profile", PROFILE, *args], capture_output=True, text=True)
     if r.returncode != 0:
-        raise AwsError(r.stderr.strip().splitlines()[-1] if r.stderr else "error")
+        msg = r.stderr.strip().splitlines()[-1] if r.stderr.strip() else "error"
+        raise AwsError(msg.removeprefix("aws: [ERROR]: "))
     return r.stdout.strip()
 
 
@@ -46,6 +49,29 @@ def jq(*args):
         return json.loads(r.stdout) or [] if r.stdout.strip() else []
     except json.JSONDecodeError:
         return []
+
+
+def settle(*args):
+    """直前に消した物の後始末（ENI の解放など）が終わるまで、依存エラーの間だけ待って繰り返す。"""
+    for _ in range(12):
+        try:
+            return aws(*args)
+        except AwsError as e:
+            if not any(x in str(e) for x in ("DependencyViolation", "ResourceInUse")):
+                raise
+            time.sleep(10)
+    return aws(*args)
+
+
+def verdict(msg):
+    """AWS の応答を「保護」「権限なし」「失敗」に分ける。理由を出すのは後ろの2つだけ。"""
+    if "explicit deny" in msg:
+        return "保護", ""
+    m = re.search(r"not authorized to perform: (\S+)", msg)
+    if m:
+        return "権限なし", m.group(1)
+    m = re.search(r"\((\w+)\) when calling the \w+ operation: (.*)", msg)
+    return "失敗", (f"{m.group(1)}: {m.group(2)}" if m else msg)[:200]
 
 
 def load_excludes():
@@ -144,6 +170,86 @@ def inventory(acct, region):
     inv["SQS キュー"] = [
         (f"arn:aws:sqs:{region}:{acct}:{u.rstrip('/').split('/')[-1]}", u)
         for u in jq("sqs", "list-queues", "--query", "QueueUrls")]
+
+    # [NOTE] ここから下は並び順が削除順。上を消し切らないと下が消せない
+    clusters = jq("ecs", "list-clusters", "--query", "clusterArns")
+
+    inv["ECS サービス"] = [
+        (s, (c, s)) for c in clusters
+        for s in jq("ecs", "list-services", "--cluster", c, "--query", "serviceArns")]
+
+    inv["ECS クラスタ"] = [(c, c) for c in clusters]
+
+    inv["EC2 インスタンス"] = [
+        (f"arn:aws:ec2:{region}:{acct}:instance/{i}", i) for i in
+        jq("ec2", "describe-instances", "--filters",
+           "Name=instance-state-name,Values=pending,running,stopping,stopped",
+           "--query", "Reservations[].Instances[].InstanceId")]
+
+    inv["ロードバランサー"] = [
+        (a, a) for a in
+        jq("elbv2", "describe-load-balancers", "--query", "LoadBalancers[].LoadBalancerArn")]
+
+    inv["ターゲットグループ"] = [
+        (a, a) for a in
+        jq("elbv2", "describe-target-groups", "--query", "TargetGroups[].TargetGroupArn")]
+
+    inv["NAT Gateway"] = [
+        (f"arn:aws:ec2:{region}:{acct}:natgateway/{i}", i) for i in
+        jq("ec2", "describe-nat-gateways", "--filter", "Name=state,Values=pending,available",
+           "--query", "NatGateways[].NatGatewayId")]
+
+    # [NOTE] ALB が持つアドレスは ServiceManaged が付き、ALB と一緒に消えるので載せない
+    inv["Elastic IP"] = [
+        (f"arn:aws:ec2:{region}:{acct}:elastic-ip/{i}", i) for i in
+        jq("ec2", "describe-addresses", "--query", "Addresses[?!ServiceManaged].AllocationId")]
+
+    # [NOTE] デフォルト VPC とその付属物は AWS が用意した土台なので載せない
+    # [NOTE] VPC の一覧に失敗するとデフォルトを見分けられないので、VPC まわりは丸ごと載せない
+    failed = len(FAILED_LISTS)
+    vpcs = jq("ec2", "describe-vpcs", "--query", "Vpcs[].{Id:VpcId,Default:IsDefault}")
+    if len(FAILED_LISTS) == failed:
+        default_vpcs = {v["Id"] for v in vpcs if v["Default"]}
+
+        def ec2(kind, i):
+            return f"arn:aws:ec2:{region}:{acct}:{kind}/{i}"
+
+        # [NOTE] 他のグループから参照されているグループは消せないので、参照している側を先に並べる
+        groups = jq("ec2", "describe-security-groups", "--query",
+                    "SecurityGroups[?GroupName!=`default`]"
+                    ".{Id:GroupId,Refs:length(IpPermissions[].UserIdGroupPairs[])}")
+        inv["セキュリティグループ"] = [
+            (ec2("security-group", g["Id"]), g["Id"])
+            for g in sorted(groups, key=lambda g: -g["Refs"])]
+
+        inv["サブネット"] = [
+            (ec2("subnet", i), i) for i in
+            jq("ec2", "describe-subnets", "--query", "Subnets[?!DefaultForAz].SubnetId")]
+
+        inv["インターネットゲートウェイ"] = [
+            (ec2("internet-gateway", g["Id"]), (g["Id"], g["Vpc"])) for g in
+            jq("ec2", "describe-internet-gateways", "--query",
+               "InternetGateways[].{Id:InternetGatewayId,Vpc:Attachments[0].VpcId}")
+            if g["Vpc"] not in default_vpcs]
+
+        # [NOTE] メインのルートテーブルは VPC と一緒に消えるので載せない
+        inv["ルートテーブル"] = [
+            (ec2("route-table", t["Id"]), t["Id"]) for t in
+            jq("ec2", "describe-route-tables", "--query",
+               "RouteTables[?!(Associations[?Main])].{Id:RouteTableId,Vpc:VpcId}")
+            if t["Vpc"] not in default_vpcs]
+
+        inv["VPC"] = [(ec2("vpc", v["Id"]), v["Id"]) for v in vpcs if not v["Default"]]
+
+    # [NOTE] 中身を消し終えてから消す。先に消すと、手で足した物に阻まれて DELETE_FAILED で残る
+    inv["CloudFormation スタック"] = [
+        (s["Id"], s["Name"]) for s in
+        jq("cloudformation", "describe-stacks", "--query",
+           "Stacks[].{Id:StackId,Name:StackName}")]
+
+    inv["Glue セッション"] = [
+        (f"arn:aws:glue:{region}:{acct}:session/{i}", i)
+        for i in jq("glue", "list-sessions", "--query", "Ids")]
 
     return {k: v for k, v in inv.items() if v}
 
@@ -264,6 +370,79 @@ def del_sqs(k):
     aws("sqs", "delete-queue", "--queue-url", k)
 
 
+def del_ecs_service(k):
+    cluster, svc = k
+    aws("ecs", "delete-service", "--cluster", cluster, "--service", svc, "--force")
+    # 消え切る前はクラスタを消せない
+    aws("ecs", "wait", "services-inactive", "--cluster", cluster, "--services", svc)
+
+
+def del_ecs_cluster(k):
+    aws("ecs", "delete-cluster", "--cluster", k)
+
+
+def del_ec2_instance(k):
+    aws("ec2", "terminate-instances", "--instance-ids", k)
+
+
+def del_elb(k):
+    aws("elbv2", "delete-load-balancer", "--load-balancer-arn", k)
+    # 消え切る前はターゲットグループを消せない
+    aws("elbv2", "wait", "load-balancers-deleted", "--load-balancer-arns", k)
+
+
+def del_target_group(k):
+    settle("elbv2", "delete-target-group", "--target-group-arn", k)
+
+
+def del_nat(k):
+    aws("ec2", "delete-nat-gateway", "--nat-gateway-id", k)
+    # 消え切る前は EIP を解放できない
+    aws("ec2", "wait", "nat-gateway-deleted", "--nat-gateway-ids", k)
+
+
+def del_eip(k):
+    aws("ec2", "release-address", "--allocation-id", k)
+
+
+def del_security_group(k):
+    settle("ec2", "delete-security-group", "--group-id", k)
+
+
+def del_subnet(k):
+    settle("ec2", "delete-subnet", "--subnet-id", k)
+
+
+def del_igw(k):
+    igw, vpc = k
+    if vpc:
+        settle("ec2", "detach-internet-gateway", "--internet-gateway-id", igw, "--vpc-id", vpc)
+    aws("ec2", "delete-internet-gateway", "--internet-gateway-id", igw)
+
+
+def del_route_table(k):
+    settle("ec2", "delete-route-table", "--route-table-id", k)
+
+
+def del_vpc(k):
+    settle("ec2", "delete-vpc", "--vpc-id", k)
+
+
+def del_stack(k):
+    aws("cloudformation", "delete-stack", "--stack-name", k)
+    try:
+        aws("cloudformation", "wait", "stack-delete-complete", "--stack-name", k)
+    except AwsError:
+        # 中身は先に消してある。CloudFormation が後始末に使う権限まで sweeper に持たせず、記録だけ消す
+        aws("cloudformation", "delete-stack", "--stack-name", k,
+            "--deletion-mode", "FORCE_DELETE_STACK")
+        aws("cloudformation", "wait", "stack-delete-complete", "--stack-name", k)
+
+
+def del_glue_session(k):
+    aws("glue", "delete-session", "--id", k)
+
+
 DELETERS = {
     "Lambda 関数": del_lambda,
     "DynamoDB テーブル": del_dynamodb,
@@ -283,6 +462,20 @@ DELETERS = {
     "ACM 証明書": del_acm,
     "CloudFront ディストリビューション": del_cloudfront,
     "SQS キュー": del_sqs,
+    "ECS サービス": del_ecs_service,
+    "ECS クラスタ": del_ecs_cluster,
+    "EC2 インスタンス": del_ec2_instance,
+    "ロードバランサー": del_elb,
+    "ターゲットグループ": del_target_group,
+    "NAT Gateway": del_nat,
+    "Elastic IP": del_eip,
+    "セキュリティグループ": del_security_group,
+    "サブネット": del_subnet,
+    "インターネットゲートウェイ": del_igw,
+    "ルートテーブル": del_route_table,
+    "VPC": del_vpc,
+    "CloudFormation スタック": del_stack,
+    "Glue セッション": del_glue_session,
 }
 
 
@@ -342,25 +535,38 @@ def main():
         print("中止しました")
         return
 
-    ok, ng = [], []
-    for svc, items in targets.items():
-        fn = DELETERS.get(svc)
-        if not fn:
-            continue
-        for arn, key in items:
-            try:
-                fn(key)
-                ok.append((svc, arn))
-                print(f"  削除  {svc:24} {arn}")
-            except AwsError as e:
-                ng.append((svc, arn, str(e)))
-                print(f"  拒否  {svc:24} {arn}")
+    done = {"削除": [], "保護": [], "権限なし": [], "失敗": []}
+    try:
+        for svc, items in targets.items():
+            fn = DELETERS.get(svc)
+            if not fn:
+                continue
+            for arn, key in items:
+                try:
+                    fn(key)
+                    kind, why = "削除", ""
+                except AwsError as e:
+                    kind, why = verdict(str(e))
+                except Exception as e:  # 1件の不具合で残りを止めない
+                    kind, why = "失敗", f"{type(e).__name__}: {e}"
+                done[kind].append((arn, why))
+                # 全角は2桁ぶんの幅なので、桁数で詰める
+                print(f"  {kind}{' ' * (10 - 2 * len(kind))}{svc:24} {arn}")
+    except KeyboardInterrupt:
+        print("\n中断しました。ここまでの結果")
 
-    print(f"\n削除 {len(ok)} 件 / 拒否 {len(ng)} 件")
-    if ng:
-        print("\n拒否されたもの（理由つき）")
-        for svc, arn, why in ng:
+    print("\n" + " / ".join(f"{k} {len(v)} 件" for k, v in done.items()))
+
+    # [NOTE] 保護は狙いどおりの結果なので理由を並べない。見るべきは下の2つ
+    if done["権限なし"]:
+        print("\n権限なし（sweeper に許可していない操作）")
+        for arn, action in done["権限なし"]:
+            print(f"  {action:42} {arn}")
+    if done["失敗"]:
+        print("\n失敗")
+        for arn, why in done["失敗"]:
             print(f"  {arn}\n      {why}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
