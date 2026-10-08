@@ -94,8 +94,9 @@ resource "aws_iam_user_policy_attachment" "readonly" {
   policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
 }
 
-# [NOTE] S3 はタグ条件非対応なので Deny が効かない
-# 各プロジェクトでバケットポリシーを設定して、削除を防いでもらう必要がある
+# [NOTE] S3 は ABAC を有効にしたバケットだけ、タグの条件を評価する
+# [NOTE] 各プロジェクトは aws_s3_bucket_abac を Enabled にする必要がある
+# [NOTE] ABAC が無効のバケットには、この Deny がバケットにもオブジェクトにも効かない
 resource "aws_iam_policy" "guardrail" {
   name        = "${var.name}-guardrail"
   description = "Project タグ付きリソースの削除を拒否。タグの値は見ない"

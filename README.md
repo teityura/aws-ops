@@ -51,7 +51,7 @@ list, and the survivors are whatever AWS refuses.
 | | |
 |---|---|
 | `sweeper-guardrail` | denies deleting anything tagged `Project`, whatever the value |
-| project bucket policies | S3 has no tag condition, so each bucket refuses deletes itself |
+| S3 bucket ABAC | S3 checks tags only where ABAC is on, so each project enables it |
 | `sweeper` permissions | allowlist of delete actions |
 | `exclude.toml` | exact ARN match. Last resort |
 
